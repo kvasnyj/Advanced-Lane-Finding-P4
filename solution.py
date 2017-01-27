@@ -4,6 +4,9 @@ import matplotlib.image as mpimg
 import numpy as np
 import cv2
 import pickle
+from Line import Line
+
+h, w = None, None
 
 def undistort(img):
     return cv2.undistort(img, mtx, dist, None, mtx)
@@ -81,41 +84,46 @@ def define_warper():
 
     return src, dst
 
-def warper(img, show = False):
+def warper(img, debug = False):
     # Compute and apply perpective transform
     M = cv2.getPerspectiveTransform(warp_src, warp_dst)
     warped = cv2.warpPerspective(img, M, (img.shape[1], img.shape[0]), flags=cv2.INTER_NEAREST)  # keep same size as input image
 
-    if show:
+    if debug:
         plt.imshow(warped)
         plt.pause(0)
 
     return warped
 
-def peaks_histogram(img, show = False):
-    h, w = img.shape
+def peaks_histogram(img, debug = False):
     left_fitx, right_fitx, yvals = [],[],[]
-    p01, p02=0,0
+    p01, p02, wide0 = 0, 0, 0
 
-    for i in range(0, int(h/2)):
-        if i==0:
-            histogram = np.sum(img[h / 2:, :], axis=0)
+    topx = h - int(h/4)
+
+    for i in range(0, topx):
+        if i == 0:
+            histogram = np.sum(img[topx:, :], axis=0)
         else:
-            histogram = np.sum(img[h/2-i:-i, :], axis=0)
+            histogram = np.sum(img[topx-i:-i, :], axis=0)
 
         offset = 100
         p1 = np.argmax(histogram[offset:w / 2])+offset
-        if p01>0 and abs(p1-p01)>100: continue
+        if p01>0 and abs(p1-p01)>200: continue
 
         p2 = w / 2 + np.argmax(histogram[w / 2:1200])
-        if p02>0 and abs(p2-p02)>100: continue
+        if p02>0 and abs(p2-p02)>200: continue
 
-        p01, p02 = p1, p2
+        wide = p2 - p1
+        if wide0 > 0 and abs(wide0 - wide) > 200: continue
+
+        p01, p02, dist0 = p1, p2, wide
+
         left_fitx.append(p1)
         right_fitx.append(p2)
         yvals.append(h-i)
 
-    if show:
+    if debug:
         print(left_fitx)
         print(right_fitx)
         plt.plot(histogram)
@@ -166,8 +174,7 @@ def region_of_interest(img, vertices):
     masked_image = cv2.bitwise_and(img, mask)
     return masked_image
 
-def pipeline(img, show = False):
-    h, w, c = img.shape
+def pipeline(img, debug = False):
     img = gaussian_blur(img, kernel_size=5)
 
     ksize = 5  # Choose a larger odd number to smooth gradient measurements
@@ -192,53 +199,78 @@ def pipeline(img, show = False):
     img = region_of_interest(total_binary, vertices)
     img[img!=0] = 1
 
-    if show:
+    if debug:
         plt.imshow(img)
         plt.pause(0)
 
     return total_binary
 
-def curvature(leftx, rightx, yvals):
-    yvals = np.array(yvals)
+def curvature(leftx, rightx, yvals, debug = False):
+    yvals = np.float32(yvals)
+    leftx = np.float32(leftx)
+    rightx = np.float32(rightx)
+
     left_fit = np.polyfit(yvals, leftx, 2)
-    left_fitx = left_fit[0] * yvals ** 2 + left_fit[1] * yvals + left_fit[2]
     right_fit = np.polyfit(yvals, rightx, 2)
-    right_fitx = right_fit[0] * yvals ** 2 + right_fit[1] * yvals + right_fit[2]
 
     # Define y-value where we want radius of curvature
-    # I'll choose the maximum y-value, corresponding to the bottom of the image
     y_eval = np.max(yvals)
     left_curverad = ((1 + (2*left_fit[0]*y_eval + left_fit[1])**2)**1.5) \
                                  /np.absolute(2*left_fit[0])
     right_curverad = ((1 + (2*right_fit[0]*y_eval + right_fit[1])**2)**1.5) \
                                     /np.absolute(2*right_fit[0])
-    #print(left_curverad, right_curverad)
+
+    if debug: print(left_curverad, right_curverad)
 
     # Define conversions in x and y from pixels space to meters
-    ym_per_pix = 30 / 720  # meters per pixel in y dimension
+    ym_per_pix = 30.0 / 720  # meters per pixel in y dimension
     xm_per_pix = 3.7 / 700  # meteres per pixel in x dimension
 
-    # left_fit_cr = np.polyfit(yvals * ym_per_pix, leftx * xm_per_pix, 2)
-    # right_fit_cr = np.polyfit(yvals * ym_per_pix, rightx * xm_per_pix, 2)
-    # left_curverad = ((1 + (2 * left_fit_cr[0] * y_eval + left_fit_cr[1]) ** 2) ** 1.5) \
-    #                 / np.absolute(2 * left_fit_cr[0])
-    # right_curverad = ((1 + (2 * right_fit_cr[0] * y_eval + right_fit_cr[1]) ** 2) ** 1.5) \
-    #                  / np.absolute(2 * right_fit_cr[0])
-    # # Now our radius of curvature is in meters
-    # print(left_curverad, 'm', right_curverad, 'm')
+    left_fit_cr = np.polyfit(yvals * ym_per_pix, leftx * xm_per_pix, 2)
+    right_fit_cr = np.polyfit(yvals * ym_per_pix, rightx * xm_per_pix, 2)
+    left_curverad = ((1 + (2 * left_fit_cr[0] * y_eval + left_fit_cr[1]) ** 2) ** 1.5) \
+                    / np.absolute(2 * left_fit_cr[0])
+    right_curverad = ((1 + (2 * right_fit_cr[0] * y_eval + right_fit_cr[1]) ** 2) ** 1.5) \
+                     / np.absolute(2 * right_fit_cr[0])
+    # Now our radius of curvature is in meters
+    if debug: print(left_curverad, 'm', right_curverad, 'm')
 
-    return left_fitx, right_fitx
+    yvals = np.arange(h - h / 2, h, 1.0)
+    left_fitx = sanity_check(left_lane, left_fit, yvals,  left_curverad)
+    right_fitx = sanity_check(right_lane, right_fit, yvals, right_curverad)
 
-def process_image(src_img, show = False):
+    return left_fitx, right_fitx, yvals
+
+def sanity_check(lane, polyfit, yvals, curvature, debug = False):
+    if lane.polyfit== None: #new object
+        lane.radius_of_curvature = curvature
+        lane.polyfit = polyfit
+        lane.detected = True
+    elif abs(lane.radius_of_curvature - curvature) < 1000:
+        lane.radius_of_curvature = curvature
+        lane.polyfit = polyfit
+        lane.detected = True
+    else:
+        if debug: print(lane.radius_of_curvature, curvature, lane.radius_of_curvature - curvature)
+        lane.detected = False
+
+    return lane.polyfit[0] * yvals ** 2 + lane.polyfit[1] * yvals + lane.polyfit[2]
+
+
+def process_image(src_img, debug = False):
+    global h, w
+    if h == None: h = src_img.shape[0]
+    if w == None: w= src_img.shape[1]
+
     img = pipeline(src_img)
     img = undistort(img)
     img = warper(img)
 
     leftx, rightx, yvals = peaks_histogram(img)
-    left_fitx, right_fitx = curvature(leftx, rightx, yvals)
+    left_fitx, right_fitx, yvals = curvature(leftx, rightx, yvals)
     img = fillPoly(src_img, img, left_fitx, right_fitx, yvals)
 
-    if show:
+    if debug:
         plt.imshow(img)
         plt.pause(0)
 
@@ -251,12 +283,15 @@ with open("distort.p", "rb") as input_file:
     dist = e["dist"]
 warp_src, warp_dst = define_warper()
 
+left_lane = Line()
+right_lane = Line()
+
 from moviepy.editor import VideoFileClip
-clip = VideoFileClip('project_video.mp4')
+clip = VideoFileClip('project_video.mp4')#.subclip(0, 2)
 new_clip = clip.fl_image(process_image)
 new_clip.write_videofile('project_video_result.mp4', audio=False)
-clip.save_frame("workbook/pv23.jpeg", t=23)
+clip.save_frame("workbook/pv1.jpeg", t=0)
 
-image = mpimg.imread('workbook/pv23.jpeg')
+image = mpimg.imread('workbook/pv1.jpeg')
 new_image = process_image(image, True)
 
