@@ -17,12 +17,12 @@ The goals / steps of this project are the following:
 
 [//]: # (Image References)
 
-[image1]: ./output_images/undistort_output.png "Undistorted"
+[image1]: ./examples/undistort_output.png "Undistorted"
 [image2]: ./output_images/undistort.png "Road Transformed"
 [image3]: ./output_images/binary_combo_example.png     "Binary Example"
 [image4]: ./output_images/warped_straight_lines.png "Warp Example"
-[image5]: ./output_images/color_fit_lines.jpg "Fit Visual"
-[image6]: ./output_images/example_output.jpg "Output"
+[image5]: ./examples/color_fit_lines.jpg "Fit Visual"
+[image6]: ./output_images/example_output.png "Output"
 [video1]: ./output_images/project_video_result.mp4 "Video"
 
 ## [Rubric](https://review.udacity.com/#!/rubrics/571/view) Points
@@ -124,4 +124,16 @@ Here's a [link to my video result](./output_images/project_video_result.mp4)
 
 ####1. Briefly discuss any problems / issues you faced in your implementation of this project.  Where will your pipeline likely fail?  What could you do to make it more robust?
 
-Here I'll talk about the approach I took, what techniques I used, what worked and why, where the pipeline might fail and how I might improve it if I were going to pursue this project further.  
+The biggest issue I faced in my implementation of this project is finding Lane points in the case with curved dotted lines. The first trick here is not to skip the whole frame but points with unexpected coordinates:
+```
+if p01>0 and abs(p1-p01)>200: continue'
+```
+The second trick is to regenerated y coordinates and then recalculated x values:
+```
+yvals = np.arange(h - h / 2, h, 1.0)
+lane.polyfit[0] * yvals ** 2 + lane.polyfit[1] * yvals + lane.polyfit[2]
+```
+
+Further improvement:
+* Use smoothing with previous measurements 
+* Control minimum and maximum wide of lane
