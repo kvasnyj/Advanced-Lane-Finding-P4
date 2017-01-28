@@ -6,10 +6,36 @@ import cv2
 import pickle
 from Line import Line
 
+# image shape
 h, w = None, None
 
-def undistort(img):
-    return cv2.undistort(img, mtx, dist, None, mtx)
+#distort parameters
+mtx, dist = None, None
+
+# ============= Blur and ROI - from P1 =============
+
+def gaussian_blur(img, kernel_size):
+    """Applies a Gaussian Noise kernel"""
+    return cv2.GaussianBlur(img, (kernel_size, kernel_size), 0)
+
+def region_of_interest(img, vertices):
+    mask = np.zeros_like(img)
+
+    # defining a 3 channel or 1 channel color to fill the mask with depending on the input image
+    if len(img.shape) > 2:
+        channel_count = img.shape[2]  # i.e. 3 or 4 depending on your image
+        ignore_mask_color = (255,) * channel_count
+    else:
+        ignore_mask_color = 255
+
+    # filling pixels inside the polygon defined by "vertices" with the fill color
+    cv2.fillPoly(mask, vertices, ignore_mask_color)
+
+    # returning the image only where mask pixels are nonzero
+    masked_image = cv2.bitwise_and(img, mask)
+    return masked_image
+
+# =============   Candy and color processing =============
 
 def abs_sobel_thresh(img, orient='x', sobel_kernel=3, thresh=(0, 255)):
     gray = cv2.cvtColor(img, cv2.COLOR_RGB2GRAY)
@@ -67,6 +93,44 @@ def color_threshold(img, thresh=(0, 255)):
 
     return color_binary
 
+# prepare image for processing
+def pipeline(img, debug = False):
+    img = gaussian_blur(img, kernel_size=5)
+
+    ksize = 5  # Choose a larger odd number to smooth gradient measurements
+    # Apply each of the thresholding functions
+    gradx = abs_sobel_thresh(img, orient='x', sobel_kernel=ksize, thresh=(10, 255))
+    grady = abs_sobel_thresh(img, orient='y', sobel_kernel=ksize, thresh=(60, 255))
+    mag_binary = mag_thresh(img, sobel_kernel=ksize, mag_thresh=(40, 255))
+    dir_binary = dir_threshold(img, sobel_kernel=ksize, thresh=(0.65, 1.05))
+
+    combined = np.zeros_like(dir_binary)
+    combined[((gradx == 1) & (grady == 1)) | ((mag_binary == 1) & (dir_binary == 1))] = 1
+
+    color_binary = color_threshold(img, thresh=(160, 255))
+
+    combined = np.zeros_like(dir_binary)
+    combined[((gradx == 1) & (grady == 1)) | ((mag_binary == 1) & (dir_binary == 1))] = 1
+
+    total_binary = np.zeros_like(combined)
+    total_binary[(color_binary > 0) | (combined > 0)] = 1
+
+    vertices = np.array([[(100, h), (450, 400), (800, 400), (1200, h)]], dtype=np.int32)
+    img = region_of_interest(total_binary, vertices)
+    img[img!=0] = 1
+
+    if debug:
+        plt.imshow(img)
+        plt.pause(0)
+
+    return total_binary
+
+
+#  ============= Undiistort and warper =============
+
+def undistort(img):
+    return cv2.undistort(img, mtx, dist, None, mtx)
+
 def define_warper():
     src = np.float32([
         [255, 685],
@@ -94,6 +158,9 @@ def warper(img, debug = False):
         plt.pause(0)
 
     return warped
+
+
+#  =============   Define lines  =============
 
 def peaks_histogram(img, debug = False):
     left_fitx, right_fitx, yvals = [],[],[]
@@ -130,80 +197,6 @@ def peaks_histogram(img, debug = False):
         plt.show()
     return left_fitx, right_fitx, yvals
 
-def draw_lines(img, x1, y1, x2, y2, color=[255, 0, 0], thickness=2):
-    cv2.line(img, (int(x1),int(y1)), (int(x2),int(y2)), color, thickness)
-
-def fillPoly(undist, warped, left_fitx, right_fitx, yvals):
-    # Create an image to draw the lines on
-    warp_zero = np.zeros_like(warped).astype(np.uint8)
-    color_warp = np.dstack((warp_zero, warp_zero, warp_zero))
-
-    # Recast the x and y points into usable format for cv2.fillPoly()
-    pts_left = np.array([np.transpose(np.vstack([left_fitx, yvals]))])
-    pts_right = np.array([np.flipud(np.transpose(np.vstack([right_fitx, yvals])))])
-    pts = np.hstack((pts_left, pts_right))
-
-    # Draw the lane onto the warped blank image
-    cv2.fillPoly(color_warp, np.int_([pts]), (0, 255, 0))
-
-    # Warp the blank back to original image space using inverse perspective matrix (Minv)
-    Minv = cv2.getPerspectiveTransform(warp_dst, warp_src)
-    newwarp = cv2.warpPerspective(color_warp, Minv, (undist.shape[1], undist.shape[0]))
-    # Combine the result with the original image
-    result = cv2.addWeighted(undist, 1, newwarp, 0.3, 0)
-    return result
-
-def gaussian_blur(img, kernel_size):
-    """Applies a Gaussian Noise kernel"""
-    return cv2.GaussianBlur(img, (kernel_size, kernel_size), 0)
-
-def region_of_interest(img, vertices):
-    mask = np.zeros_like(img)
-
-    # defining a 3 channel or 1 channel color to fill the mask with depending on the input image
-    if len(img.shape) > 2:
-        channel_count = img.shape[2]  # i.e. 3 or 4 depending on your image
-        ignore_mask_color = (255,) * channel_count
-    else:
-        ignore_mask_color = 255
-
-    # filling pixels inside the polygon defined by "vertices" with the fill color
-    cv2.fillPoly(mask, vertices, ignore_mask_color)
-
-    # returning the image only where mask pixels are nonzero
-    masked_image = cv2.bitwise_and(img, mask)
-    return masked_image
-
-def pipeline(img, debug = False):
-    img = gaussian_blur(img, kernel_size=5)
-
-    ksize = 5  # Choose a larger odd number to smooth gradient measurements
-    # Apply each of the thresholding functions
-    gradx = abs_sobel_thresh(img, orient='x', sobel_kernel=ksize, thresh=(10, 255))
-    grady = abs_sobel_thresh(img, orient='y', sobel_kernel=ksize, thresh=(60, 255))
-    mag_binary = mag_thresh(img, sobel_kernel=ksize, mag_thresh=(40, 255))
-    dir_binary = dir_threshold(img, sobel_kernel=ksize, thresh=(0.65, 1.05))
-
-    combined = np.zeros_like(dir_binary)
-    combined[((gradx == 1) & (grady == 1)) | ((mag_binary == 1) & (dir_binary == 1))] = 1
-
-    color_binary = color_threshold(img, thresh=(160, 255))
-
-    combined = np.zeros_like(dir_binary)
-    combined[((gradx == 1) & (grady == 1)) | ((mag_binary == 1) & (dir_binary == 1))] = 1
-
-    total_binary = np.zeros_like(combined)
-    total_binary[(color_binary > 0) | (combined > 0)] = 1
-
-    vertices = np.array([[(100, h), (450, 400), (800, 400), (1200, h)]], dtype=np.int32)
-    img = region_of_interest(total_binary, vertices)
-    img[img!=0] = 1
-
-    if debug:
-        plt.imshow(img)
-        plt.pause(0)
-
-    return total_binary
 
 def curvature(leftx, rightx, yvals, debug = False):
     yvals = np.float32(yvals)
@@ -257,12 +250,36 @@ def sanity_check(lane, polyfit, yvals, curvature, debug = False):
     return lane.polyfit[0] * yvals ** 2 + lane.polyfit[1] * yvals + lane.polyfit[2]
 
 
+def fillPoly(undist, warped, left_fitx, right_fitx, yvals):
+    # Create an image to draw the lines on
+    warp_zero = np.zeros_like(warped).astype(np.uint8)
+    color_warp = np.dstack((warp_zero, warp_zero, warp_zero))
+
+    # Recast the x and y points into usable format for cv2.fillPoly()
+    pts_left = np.array([np.transpose(np.vstack([left_fitx, yvals]))])
+    pts_right = np.array([np.flipud(np.transpose(np.vstack([right_fitx, yvals])))])
+    pts = np.hstack((pts_left, pts_right))
+
+    # Draw the lane onto the warped blank image
+    cv2.fillPoly(color_warp, np.int_([pts]), (0, 255, 0))
+
+    # Warp the blank back to original image space using inverse perspective matrix (Minv)
+    Minv = cv2.getPerspectiveTransform(warp_dst, warp_src)
+    newwarp = cv2.warpPerspective(color_warp, Minv, (undist.shape[1], undist.shape[0]))
+    # Combine the result with the original image
+    result = cv2.addWeighted(undist, 1, newwarp, 0.3, 0)
+    return result
+
+
+#  =============   Process image  =============
+
 def process_image(src_img, debug = False):
     global h, w
     if h == None: h = src_img.shape[0]
     if w == None: w= src_img.shape[1]
 
     img = pipeline(src_img)
+
     img = undistort(img)
     img = warper(img)
 
@@ -277,21 +294,27 @@ def process_image(src_img, debug = False):
     return img
 
 
+# =============   Main code  =============
+
+# Read undistort parameters from file
 with open("distort.p", "rb") as input_file:
     e = pickle.load(input_file)
     mtx = e["mtx"]
     dist = e["dist"]
 warp_src, warp_dst = define_warper()
 
+# Lines for sanity checking
 left_lane = Line()
 right_lane = Line()
 
+# Processing clip
 from moviepy.editor import VideoFileClip
 clip = VideoFileClip('project_video.mp4')#.subclip(0, 2)
 new_clip = clip.fl_image(process_image)
 new_clip.write_videofile('project_video_result.mp4', audio=False)
-clip.save_frame("workbook/pv1.jpeg", t=0)
 
-image = mpimg.imread('workbook/pv1.jpeg')
-new_image = process_image(image, True)
+# Debug one frame
+#clip.save_frame("workbook/pv1.jpeg", t=0)
+#image = mpimg.imread('test_images/straight_lines1.jpg')
+#new_image = process_image(image, True)
 
