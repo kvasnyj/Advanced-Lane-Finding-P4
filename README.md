@@ -23,6 +23,7 @@ The goals / steps of this project are the following:
 [image4]: ./output_images/warped_straight_lines.png "Warp Example"
 [image5]: ./examples/color_fit_lines.jpg "Fit Visual"
 [image6]: ./output_images/example_output.png "Output"
+[imagepipe]: ./output_images/pipeline.png "Pipeline"
 [video1]: ./output_images/project_video_result.mp4 "Video"
 
 ## [Rubric](https://review.udacity.com/#!/rubrics/571/view) Points
@@ -59,7 +60,9 @@ I used a combination of color and gradient thresholds to generate a binary image
 
 ![alt text][image3]
 
-In additional I applyed Gaussian blur and region of interest.
+In additional I applyed Gaussian blur and region of interest:
+
+![alt text][imagepipe]
 
 ####3. Describe how (and identify where in your code) you performed a perspective transform and provide an example of a transformed image.
 
@@ -126,7 +129,7 @@ Here's a [link to my video result](./output_images/project_video_result.mp4)
 
 The biggest issue I faced in my implementation of this project is finding Lane points in the case with curved dotted lines. The first trick here is not to skip the whole frame but points with unexpected coordinates:
 ```
-if p01>0 and abs(p1-p01)>200: continue'
+if abs(p1-p01)>200: continue
 ```
 The second trick is to regenerated y coordinates and then recalculated x values:
 ```
