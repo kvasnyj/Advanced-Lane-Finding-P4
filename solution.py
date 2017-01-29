@@ -82,14 +82,31 @@ def dir_threshold(img, sobel_kernel=3, thresh=(0, np.pi/2)):
 
     return dir_binary
 
-def color_threshold(img, thresh=(0, 255)):
-    # Convert to HLS color space and separate the S channel
-    hls = cv2.cvtColor(img, cv2.COLOR_RGB2HLS)
-    s_channel = hls[:, :, 2]
+def apply_color_mask(img, thresh_low_, thresh_high_):
+    img_masked = np.copy(img)
+    thresholds = ((img[:,:,0]<thresh_low_[0]) | (img[:,:,0]>thresh_high_[0])) \
+               | ((img[:,:,1]<thresh_low_[1]) | (img[:,:,1]>thresh_high_[1])) \
+               | ((img[:,:,2]<thresh_low_[2]) | (img[:,:,2]>thresh_high_[2]))
+    img_masked[thresholds] = [0,0,0]
+    img_masked = cv2.cvtColor(img_masked, cv2.COLOR_HSV2RGB)
+    img_masked = cv2.cvtColor(img_masked, cv2.COLOR_RGB2GRAY)
+    return img_masked
 
-      # Threshold color channel
-    color_binary = np.zeros_like(s_channel)
-    color_binary[(s_channel >= thresh[0]) & (s_channel <= thresh[1])] = 1
+def color_threshold(img, thresh=(0, 255)):
+    hsv = cv2.cvtColor(img, cv2.COLOR_RGB2HSV)
+
+    yellow_hsv_low = np.array([0, 80, 200])
+    yellow_hsv_high = np.array([40, 255, 255])
+    yellow_binary = apply_color_mask(hsv, yellow_hsv_low, yellow_hsv_high)
+
+    white_hsv_low = np.array([20, 0, 200])
+    white_hsv_high = np.array([255, 80, 255])
+    white_binary = apply_color_mask(hsv, white_hsv_low, white_hsv_high)
+
+    # Threshold color channel
+    color_binary = np.zeros_like(white_binary)
+    color_binary[(yellow_binary >0) | (white_binary > 0)] = 1
+
 
     return color_binary
 
@@ -97,7 +114,7 @@ def color_threshold(img, thresh=(0, 255)):
 def pipeline(img, debug = False):
     img = gaussian_blur(img, kernel_size=5)
 
-    ksize = 5  # Choose a larger odd number to smooth gradient measurements
+    ksize = 7  # Choose a larger odd number to smooth gradient measurements
     # Apply each of the thresholding functions
     gradx = abs_sobel_thresh(img, orient='x', sobel_kernel=ksize, thresh=(10, 255))
     grady = abs_sobel_thresh(img, orient='y', sobel_kernel=ksize, thresh=(60, 255))
@@ -132,6 +149,8 @@ def undistort(img):
     return cv2.undistort(img, mtx, dist, None, mtx)
 
 def define_warper():
+    img_size = mpimg.imread('test_images/straight_lines1.jpg').shape
+
     src = np.float32([
         [255, 685],
         [1050, 685],
@@ -174,12 +193,14 @@ def peaks_histogram(img, debug = False):
         else:
             histogram = np.sum(img[topx-i:-i, :], axis=0)
 
+        histogram[histogram<h*5/100] = 0
+
         offset = 100
         p1 = np.argmax(histogram[offset:w / 2])+offset
-        if p01>0 and abs(p1-p01)>200: continue
+        if (p01>0 and abs(p1-p01)>200)| (histogram[p1]<5): continue
 
         p2 = w / 2 + np.argmax(histogram[w / 2:1200])
-        if p02>0 and abs(p2-p02)>200: continue
+        if (p02>0 and abs(p2-p02)>200) | (histogram[p2]<5): continue
 
         wide = p2 - p1
         if wide0 > 0 and abs(wide0 - wide) > 200: continue
@@ -190,11 +211,12 @@ def peaks_histogram(img, debug = False):
         right_fitx.append(p2)
         yvals.append(h-i)
 
-    if debug:
-        print(left_fitx)
-        print(right_fitx)
-        plt.plot(histogram)
-        plt.show()
+        if debug:
+            print(left_fitx)
+            print(right_fitx)
+            plt.plot(histogram)
+            plt.show()
+
     return left_fitx, right_fitx, yvals
 
 
@@ -235,11 +257,13 @@ def curvature(leftx, rightx, yvals, debug = False):
     return left_fitx, right_fitx, yvals
 
 def sanity_check(lane, polyfit, yvals, curvature, debug = False):
+    #if lane.polyfit!= None: print(lane.radius_of_curvature - curvature)
+
     if lane.polyfit== None: #new object
         lane.radius_of_curvature = curvature
         lane.polyfit = polyfit
         lane.detected = True
-    elif abs(lane.radius_of_curvature - curvature) < 1000:
+    elif abs(lane.radius_of_curvature - curvature) < 1200:
         lane.radius_of_curvature = curvature
         lane.polyfit = polyfit
         lane.detected = True
@@ -314,7 +338,6 @@ new_clip = clip.fl_image(process_image)
 new_clip.write_videofile('project_video_result.mp4', audio=False)
 
 # Debug one frame
-#clip.save_frame("workbook/pv1.jpeg", t=0)
-#image = mpimg.imread('test_images/straight_lines1.jpg')
-#new_image = process_image(image, True)
-
+clip.save_frame("workbook/pv1.jpeg", t=28)
+image = mpimg.imread('workbook/pv1.jpeg')
+new_image = process_image(image, True)
