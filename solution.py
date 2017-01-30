@@ -82,33 +82,25 @@ def dir_threshold(img, sobel_kernel=3, thresh=(0, np.pi/2)):
 
     return dir_binary
 
-def apply_color_mask(img, thresh_low_, thresh_high_):
-    img_masked = np.copy(img)
-    thresholds = ((img[:,:,0]<thresh_low_[0]) | (img[:,:,0]>thresh_high_[0])) \
-               | ((img[:,:,1]<thresh_low_[1]) | (img[:,:,1]>thresh_high_[1])) \
-               | ((img[:,:,2]<thresh_low_[2]) | (img[:,:,2]>thresh_high_[2]))
-    img_masked[thresholds] = [0,0,0]
-    img_masked = cv2.cvtColor(img_masked, cv2.COLOR_HSV2RGB)
-    img_masked = cv2.cvtColor(img_masked, cv2.COLOR_RGB2GRAY)
-    return img_masked
 
-def color_threshold(img, thresh=(0, 255)):
-    hsv = cv2.cvtColor(img, cv2.COLOR_RGB2HSV)
+def color_threshold(img):
+    HSV = cv2.cvtColor(img, cv2.COLOR_RGB2HSV)
 
-    yellow_hsv_low = np.array([0, 80, 200])
-    yellow_hsv_high = np.array([40, 255, 255])
-    yellow_binary = apply_color_mask(hsv, yellow_hsv_low, yellow_hsv_high)
+    # For yellow
+    yellow = cv2.inRange(HSV, (20, 100, 100), (50, 255, 255))
 
-    white_hsv_low = np.array([20, 0, 200])
-    white_hsv_high = np.array([255, 80, 255])
-    white_binary = apply_color_mask(hsv, white_hsv_low, white_hsv_high)
+    # For white
+    sensitivity_1 = 68
+    white = cv2.inRange(HSV, (0, 0, 255 - sensitivity_1), (255, 20, 255))
 
-    # Threshold color channel
-    color_binary = np.zeros_like(white_binary)
-    color_binary[(yellow_binary >0) | (white_binary > 0)] = 1
+    sensitivity_2 = 60
+    HSL = cv2.cvtColor(img, cv2.COLOR_RGB2HLS)
+    white_2 = cv2.inRange(HSL, (0, 255 - sensitivity_2, 0), (255, 255, sensitivity_2))
+    white_3 = cv2.inRange(img, (200, 200, 200), (255, 255, 255))
 
+    bit_layer = yellow | white | white_2 | white_3
 
-    return color_binary
+    return bit_layer
 
 # prepare image for processing
 def pipeline(img, debug = False):
@@ -124,7 +116,7 @@ def pipeline(img, debug = False):
     combined = np.zeros_like(dir_binary)
     combined[((gradx == 1) & (grady == 1)) | ((mag_binary == 1) & (dir_binary == 1))] = 1
 
-    color_binary = color_threshold(img, thresh=(160, 255))
+    color_binary = color_threshold(img)
 
     combined = np.zeros_like(dir_binary)
     combined[((gradx == 1) & (grady == 1)) | ((mag_binary == 1) & (dir_binary == 1))] = 1
@@ -181,35 +173,54 @@ def warper(img, debug = False):
 
 #  =============   Define lines  =============
 
+def peaks_histogram2(img, side="left"):
+    side_x = []
+    side_y = []
+    past_cord = 0
+
+    # right side
+    for i in reversed(range(10, 100)):
+        if side == "left":
+            x0, x1 = 0, img.shape[1] / 2
+        else:
+            x0, x1 = img.shape[1] / 2, img.shape[1]
+
+        histogram = np.sum(img[i * img.shape[0] / 100:(i + 1) * img.shape[0] / 100, x0:x1], axis=0)
+
+        xcord = int(np.argmax(histogram)) + x0
+        ycord = int(i * img.shape[0] / 100)
+        if (ycord == 0 or xcord == x0):
+            pass
+        elif (abs(xcord - past_cord) > 200 and not (i == 99) and not (past_cord == x0)and not (past_cord == 0)):
+            pass
+        else:
+            side_x.append(xcord)
+            side_y.append(ycord)
+            past_cord = xcord
+
+    return side_x, side_y
+
 def peaks_histogram(img, debug = False):
-    left_fitx, right_fitx, yvals = [],[],[]
-    p01, p02, wide0 = 0, 0, 0
+    left_fitx, right_fitx, left_fity, right_fity = [], [], [], []
+    past_left, past_right = 0, w / 2
 
     topx = h - int(h/4)
 
     for i in range(0, topx):
-        if i == 0:
-            histogram = np.sum(img[topx:, :], axis=0)
-        else:
-            histogram = np.sum(img[topx-i:-i, :], axis=0)
-
-        histogram[histogram<h*5/100] = 0
+        histogram = np.sum(img[topx-i:h-i, :], axis=0)
 
         offset = 100
-        p1 = np.argmax(histogram[offset:w / 2])+offset
-        if (p01>0 and abs(p1-p01)>200)| (histogram[p1]<5): continue
+        x_left = np.argmax(histogram[offset:w / 2])+offset
+        if (past_left == 0) | (abs(x_left-past_left)<150) & (histogram[x_left]>=5):
+            left_fitx.append(x_left)
+            left_fity.append(h-i)
+            past_left = x_left
 
-        p2 = w / 2 + np.argmax(histogram[w / 2:1200])
-        if (p02>0 and abs(p2-p02)>200) | (histogram[p2]<5): continue
-
-        wide = p2 - p1
-        if wide0 > 0 and abs(wide0 - wide) > 200: continue
-
-        p01, p02, dist0 = p1, p2, wide
-
-        left_fitx.append(p1)
-        right_fitx.append(p2)
-        yvals.append(h-i)
+        x_right = w / 2 + np.argmax(histogram[w / 2:1200])
+        if (past_right == w / 2) | (abs(x_right-past_right)<150) & (histogram[x_right]>=5):
+            right_fitx.append(x_right)
+            right_fity.append(h-i)
+            past_right = x_right
 
         if debug:
             print(left_fitx)
@@ -217,19 +228,20 @@ def peaks_histogram(img, debug = False):
             plt.plot(histogram)
             plt.show()
 
-    return left_fitx, right_fitx, yvals
+    return left_fitx, left_fity, right_fitx, right_fity
 
 
-def curvature(leftx, rightx, yvals, debug = False):
-    yvals = np.float32(yvals)
+def curvature(leftx, lefty, rightx, righty, debug = False):
     leftx = np.float32(leftx)
     rightx = np.float32(rightx)
+    lefty = np.float32(lefty)
+    righty = np.float32(righty)
 
-    left_fit = np.polyfit(yvals, leftx, 2)
-    right_fit = np.polyfit(yvals, rightx, 2)
+    left_fit = np.polyfit(lefty, leftx, 2)
+    right_fit = np.polyfit(righty, rightx, 2)
 
     # Define y-value where we want radius of curvature
-    y_eval = np.max(yvals)
+    y_eval = np.max(lefty)
     left_curverad = ((1 + (2*left_fit[0]*y_eval + left_fit[1])**2)**1.5) \
                                  /np.absolute(2*left_fit[0])
     right_curverad = ((1 + (2*right_fit[0]*y_eval + right_fit[1])**2)**1.5) \
@@ -241,8 +253,8 @@ def curvature(leftx, rightx, yvals, debug = False):
     ym_per_pix = 30.0 / 720  # meters per pixel in y dimension
     xm_per_pix = 3.7 / 700  # meteres per pixel in x dimension
 
-    left_fit_cr = np.polyfit(yvals * ym_per_pix, leftx * xm_per_pix, 2)
-    right_fit_cr = np.polyfit(yvals * ym_per_pix, rightx * xm_per_pix, 2)
+    left_fit_cr = np.polyfit(lefty * ym_per_pix, leftx * xm_per_pix, 2)
+    right_fit_cr = np.polyfit(righty * ym_per_pix, rightx * xm_per_pix, 2)
     left_curverad = ((1 + (2 * left_fit_cr[0] * y_eval + left_fit_cr[1]) ** 2) ** 1.5) \
                     / np.absolute(2 * left_fit_cr[0])
     right_curverad = ((1 + (2 * right_fit_cr[0] * y_eval + right_fit_cr[1]) ** 2) ** 1.5) \
@@ -254,27 +266,32 @@ def curvature(leftx, rightx, yvals, debug = False):
     left_fitx = sanity_check(left_lane, left_fit, yvals,  left_curverad)
     right_fitx = sanity_check(right_lane, right_fit, yvals, right_curverad)
 
-    return left_fitx, right_fitx, yvals
+    return left_fitx, right_fitx, yvals, (left_curverad + right_curverad)/2
 
-def sanity_check(lane, polyfit, yvals, curvature, debug = False):
-    #if lane.polyfit!= None: print(lane.radius_of_curvature - curvature)
-
+def sanity_check(lane, polyfit, yvals, curvature):
     if lane.polyfit== None: #new object
         lane.radius_of_curvature = curvature
         lane.polyfit = polyfit
         lane.detected = True
-    elif abs(lane.radius_of_curvature - curvature) < 1200:
-        lane.radius_of_curvature = curvature
-        lane.polyfit = polyfit
-        lane.detected = True
+        lane.count_skip = 0
     else:
-        if debug: print(lane.radius_of_curvature, curvature, lane.radius_of_curvature - curvature)
-        lane.detected = False
+        a = np.column_stack((lane.polyfit[0] * yvals ** 2 + lane.polyfit[1] * yvals + lane.polyfit[2], yvals))
+        b = np.column_stack((polyfit[0] * yvals ** 2 + polyfit[1] * yvals + polyfit[2], yvals))
+        ret = cv2.matchShapes(a, b, 1, 0.0)
+
+        if (ret < 0.005) | (lane.count_skip > 10):
+            lane.radius_of_curvature = curvature
+            lane.polyfit = polyfit
+            lane.detected = True
+            lane.count_skip = 0
+        else:
+            lane.detected = False
+            lane.count_skip += 1
 
     return lane.polyfit[0] * yvals ** 2 + lane.polyfit[1] * yvals + lane.polyfit[2]
 
 
-def fillPoly(undist, warped, left_fitx, right_fitx, yvals):
+def fillPoly(undist, warped, left_fitx, right_fitx, yvals, curv):
     # Create an image to draw the lines on
     warp_zero = np.zeros_like(warped).astype(np.uint8)
     color_warp = np.dstack((warp_zero, warp_zero, warp_zero))
@@ -292,6 +309,24 @@ def fillPoly(undist, warped, left_fitx, right_fitx, yvals):
     newwarp = cv2.warpPerspective(color_warp, Minv, (undist.shape[1], undist.shape[0]))
     # Combine the result with the original image
     result = cv2.addWeighted(undist, 1, newwarp, 0.3, 0)
+
+    font = cv2.FONT_HERSHEY_SIMPLEX
+    text = "Radius of curvature: {} m".format(int(curv))
+    cv2.putText(result, text, (400, 100), font, 1, (255, 255, 255), 2)
+    pts = np.argwhere(newwarp[:, :, 1])
+
+    position = w/2
+    left  = np.min(pts[(pts[:,1] < position) & (pts[:,0] > 700)][:,1])
+    right = np.max(pts[(pts[:,1] > position) & (pts[:,0] > 700)][:,1])
+    center = (left + right)/2
+    xm_per_pix = 3.7/700 # meteres per pixel in x dimension
+    position = (position - center)*xm_per_pix
+    if position < 0:
+        text = "Vehicle is {:.2f} m left of center".format(-position)
+    else:
+        text = "Vehicle is {:.2f} m right of center".format(position)
+    cv2.putText(result, text, (400, 150), font, 1, (255, 255, 255), 2)
+
     return result
 
 
@@ -307,9 +342,13 @@ def process_image(src_img, debug = False):
     img = undistort(img)
     img = warper(img)
 
-    leftx, rightx, yvals = peaks_histogram(img)
-    left_fitx, right_fitx, yvals = curvature(leftx, rightx, yvals)
-    img = fillPoly(src_img, img, left_fitx, right_fitx, yvals)
+    #rightx, righty = peaks_histogram2(img, "right")
+    #leftx, lefty = peaks_histogram2(img, "left")
+
+    leftx, lefty, rightx, righty = peaks_histogram(img)
+
+    left_fitx, right_fitx, yvals, curv = curvature(leftx, lefty, rightx, righty)
+    img = fillPoly(src_img, img, left_fitx, right_fitx, yvals, curv)
 
     if debug:
         plt.imshow(img)
@@ -333,11 +372,12 @@ right_lane = Line()
 
 # Processing clip
 from moviepy.editor import VideoFileClip
-clip = VideoFileClip('project_video.mp4')#.subclip(0, 2)
-new_clip = clip.fl_image(process_image)
-new_clip.write_videofile('project_video_result.mp4', audio=False)
-
-# Debug one frame
-clip.save_frame("workbook/pv1.jpeg", t=28)
-image = mpimg.imread('workbook/pv1.jpeg')
-new_image = process_image(image, True)
+clip = VideoFileClip('project_video.mp4')#.subclip(39, 41)
+if True:
+    new_clip = clip.fl_image(process_image)
+    new_clip.write_videofile('project_video_result.mp4', audio=False)
+else:
+    # Debug one frame
+    clip.save_frame("workbook/pv1.jpeg", t=0)
+    image = mpimg.imread('workbook/pv1.jpeg')
+    new_image = process_image(image, True)

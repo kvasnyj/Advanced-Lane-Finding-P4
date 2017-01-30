@@ -5,6 +5,8 @@ class Line():
         # was the line detected in the last iteration?
         self.detected = False
 
+        self.count_skip = 0
+
         # x values of the last n fits of the line
         self.recent_xfitted = []
 
